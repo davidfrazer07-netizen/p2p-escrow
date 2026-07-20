@@ -108,6 +108,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileRetryKey, setProfileRetryKey] = useState(0);
 
   useEffect(() => {
     if (!authConfigured || !supabase) {
@@ -141,6 +143,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
     let active = true;
     setProfileLoading(true);
+    setProfileError(null);
     supabase
       .from("profiles")
       .select("*")
@@ -148,13 +151,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       .single()
       .then(({ data, error }) => {
         if (!active) return;
-        if (!error && data) setProfile(data as Profile);
+        if (error || !data) {
+          setProfileError(
+            error?.message ??
+              "No profile record found for this account yet. This usually means the account-creation step didn't finish — try Retry, or contact support if it keeps happening.",
+          );
+        } else {
+          setProfile(data as Profile);
+        }
         setProfileLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [session]);
+  }, [session, profileRetryKey]);
 
   if (!authConfigured) {
     return (
@@ -201,8 +211,24 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (profileLoading || !profile) {
+  if (profileLoading) {
     return <div className="flex min-h-screen items-center justify-center text-muted">Loading...</div>;
+  }
+
+  if (!profile) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <GlassCard className="max-w-sm text-center">
+          <SectionTitle>Couldn&apos;t load your account</SectionTitle>
+          <p className="mt-2 text-sm text-bear">{profileError}</p>
+          <div className="mt-4">
+            <GhostButton accent onClick={() => setProfileRetryKey((k) => k + 1)}>
+              Retry
+            </GhostButton>
+          </div>
+        </GlassCard>
+      </div>
+    );
   }
 
   const kycFieldsComplete = Boolean(profile.full_name && profile.phone && profile.id_proof_url);
