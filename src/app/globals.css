@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #030805;
+  --bg2: #05130a;
+  --surface: #071d10;
+  --surface2: #0d2b18;
+  --line: #1c5a34;
+  --text: #eafff0;
+  --muted: #7fb896;
+  --bull: #39ff8a;
+  --bear: #ff5d73;
+  --accent: #39ff8a;
+  --accent-hi: #a6ffce;
+  --hot: #ff3b6b;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg2);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-bull: var(--bull);
+  --color-bear: var(--bear);
+  --color-accent: var(--accent);
+  --color-accent-hi: var(--accent-hi);
+  --color-hot: var(--hot);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), ui-rounded, system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.glass-card {
+  padding: 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 12%, transparent);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 20%, transparent);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent 60%);
+  pointer-events: none;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+.wordmark {
+  font-weight: 800;
+  letter-spacing: 0.35em;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+.hud-glow {
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 70%, transparent));
+}
