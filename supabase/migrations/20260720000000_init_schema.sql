@@ -147,6 +147,27 @@ begin
 end;
 $$;
 
+-- Admin check used inside policies below. Written as a SECURITY DEFINER
+-- function, not an inline `exists (select 1 from profiles ...)` subquery,
+-- because a policy on `profiles` that subqueries `profiles` re-triggers
+-- every SELECT policy on that table for the inner query -- including
+-- itself -- which Postgres cannot resolve and fails with "infinite
+-- recursion detected in policy for relation \"profiles\"". A SECURITY
+-- DEFINER function's internal query runs as the function owner and bypasses
+-- RLS entirely, breaking that cycle. This is the standard fix for this
+-- exact, common Postgres/Supabase footgun.
+create or replace function public.is_admin(uid uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce((select is_admin from public.profiles where id = uid), false);
+$$;
+
+grant execute on function public.is_admin(uuid) to authenticated;
+
 -- Enable RLS
 alter table public.profiles enable row level security;
 alter table public.listings enable row level security;
@@ -161,27 +182,60 @@ for select using (auth.uid() = id);
 drop policy if exists profiles_select_admin on public.profiles;
 create policy profiles_select_admin on public.profiles
 for select using (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  public.is_admin(auth.uid())
 );
 
+-- Guards profiles_update_self below: is the caller leaving is_admin,
+-- kyc_status, and the trust-stat columns exactly as they were? Column-level
+-- GRANTs can't express this, because admins and regular users connect as
+-- the *same* Postgres role (authenticated) -- is_admin is just a flag on
+-- the row, not a separate DB role -- so a grant that lets admins update
+-- kyc_status via profiles_update_admin would just as easily let a regular
+-- user set their own kyc_status to 'verified'. This has to be a row-level
+-- check instead, and it's a SECURITY DEFINER function (not an inline
+-- correlated subquery) for the same reason as is_admin() above: it needs to
+-- read profiles from within a policy on profiles without re-triggering that
+-- table's own RLS.
+create or replace function public.profile_protected_fields_unchanged(
+  uid uuid, chk_is_admin boolean, chk_kyc_status text,
+  chk_trades integer, chk_usd numeric, chk_inr numeric
+)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select
+    chk_is_admin = p.is_admin
+    and chk_kyc_status = p.kyc_status
+    and chk_trades = p.completed_trades_count
+    and chk_usd = p.total_volume_usd
+    and chk_inr = p.total_volume_inr
+  from public.profiles p
+  where p.id = uid;
+$$;
+
+grant execute on function public.profile_protected_fields_unchanged(uuid, boolean, text, integer, numeric, numeric) to authenticated;
+
+-- Self-service updates can't grant admin, change their own KYC status, or
+-- forge trust stats; those only change via approve_escrow_order() (SECURITY
+-- DEFINER, bypasses RLS) or a direct admin edit through profiles_update_admin
+-- below.
 drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles
 for update using (auth.uid() = id)
 with check (
   auth.uid() = id
-  -- self-service updates can't grant admin or forge trust stats; those only
-  -- change via approve_escrow_order() (SECURITY DEFINER, bypasses RLS) or a
-  -- direct admin edit through profiles_update_admin below.
-  and is_admin = (select p.is_admin from public.profiles p where p.id = auth.uid())
-  and completed_trades_count = (select p.completed_trades_count from public.profiles p where p.id = auth.uid())
-  and total_volume_usd = (select p.total_volume_usd from public.profiles p where p.id = auth.uid())
-  and total_volume_inr = (select p.total_volume_inr from public.profiles p where p.id = auth.uid())
+  and public.profile_protected_fields_unchanged(
+    id, is_admin, kyc_status, completed_trades_count, total_volume_usd, total_volume_inr
+  )
 );
 
 drop policy if exists profiles_update_admin on public.profiles;
 create policy profiles_update_admin on public.profiles
 for update using (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  public.is_admin(auth.uid())
 );
 
 -- Listings policies
@@ -190,7 +244,7 @@ create policy listings_select_active on public.listings
 for select using (
   status = 'active'
   or user_id = auth.uid()
-  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  or public.is_admin(auth.uid())
 );
 
 drop policy if exists listings_insert_self on public.listings;
@@ -212,7 +266,7 @@ create policy escrow_select_parties on public.escrow_orders
 for select using (
   auth.uid() = buyer_id
   or auth.uid() = seller_id
-  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  or public.is_admin(auth.uid())
 );
 
 drop policy if exists escrow_insert_parties on public.escrow_orders;
@@ -244,10 +298,10 @@ with check (
 drop policy if exists escrow_update_admin on public.escrow_orders;
 create policy escrow_update_admin on public.escrow_orders
 for update using (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  public.is_admin(auth.uid())
 )
 with check (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  public.is_admin(auth.uid())
 );
 
 -- Messages policies
@@ -260,7 +314,7 @@ for select using (
     and (
       e.buyer_id = auth.uid()
       or e.seller_id = auth.uid()
-      or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+      or public.is_admin(auth.uid())
     )
   )
 );
@@ -275,7 +329,7 @@ for insert with check (
     and (
       e.buyer_id = auth.uid()
       or e.seller_id = auth.uid()
-      or exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+      or public.is_admin(auth.uid())
     )
   )
 );
@@ -323,5 +377,5 @@ drop policy if exists id_proofs_select_admin on storage.objects;
 create policy id_proofs_select_admin on storage.objects
 for select using (
   bucket_id = 'id-proofs'
-  and exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_admin)
+  and public.is_admin(auth.uid())
 );
